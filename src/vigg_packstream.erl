@@ -10,7 +10,7 @@
 -author("Frode.Randers@forsakringskassan.se").
 
 %% API
--export([serialize/1, deserialize/2]).
+-export([serialize/1, deserialize/3]).
 
 
 -define(HELLO, 16#01).
@@ -42,48 +42,28 @@ serialize([]) -> {0, []}.
 
 
 %% @doc Deserialize reply from server
-deserialize(Sock, Timeout) ->
-  Reply =
-    case gen_tcp:recv(Sock, 4, Timeout) of
-      {ok, <<Size:16/big-unsigned-integer, 16#B1:8, ?SUCCESS:8>>} ->
-        ExpectedSize = Size - 2, % TODO arithmetics around wrapping need to be verified!
-        {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-        {success, Data};
+%% We observe that these reply structs only contain one field
+deserialize(Sock, Timeout, Head) ->
+  case Head of
+    <<Size:16/big-unsigned-integer, 16#B1:8, ?SUCCESS:8>> ->
+      ExpectedSize = Size - 2, % TODO arithmetics around wrapping need to be verified!
+      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
+      {success, Data};
 
-      {ok, <<Size:16/big-unsigned-integer, 16#B1:8, ?RECORD:8>>} ->
-        ExpectedSize = Size - 2,
-        {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-        {record, Data};
+    <<Size:16/big-unsigned-integer, 16#B1:8, ?RECORD:8>> ->
+      ExpectedSize = Size - 2,
+      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
+      {record, Data};
 
-      {ok, <<Size:16/big-unsigned-integer, 16#B1:8, ?IGNORED:8>>} ->
-        ExpectedSize = Size - 2,
-        {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-        {ignored, Data};
+    <<Size:16/big-unsigned-integer, 16#B1:8, ?IGNORED:8>> ->
+      ExpectedSize = Size - 2,
+      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
+      {ignored, Data};
 
-      {ok, <<Size:16/big-unsigned-integer, 16#B1:8, ?FAILURE:8>>} ->
-        ExpectedSize = Size - 2,
-        {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-        {failure, Data};
-
-      {error, timeout} = Cause ->
-        error_logger:error_msg("Timeout while waiting for reply: After ", [Timeout]),
-        Cause;
-
-      Error1 ->
-        error_logger:error_msg("Could not read struct in reply from server: ", [Error1]),
-        {error, read_failure}
-    end,
-  case gen_tcp:recv(Sock, 2, Timeout) of
-    {ok, <<16#0:16>>} ->
-      {ok, Reply};
-
-    {error, timeout} ->
-      error_logger:error_msg("Timeout while waiting for structure terminator: After ", [Timeout]),
-      {error, timeout};
-
-    Error2 ->
-      error_logger:error_msg("Mismatched structure terminator: ", [Error2]),
-      {error, mismatch}
+    <<Size:16/big-unsigned-integer, 16#B1:8, ?FAILURE:8>> ->
+      ExpectedSize = Size - 2,
+      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
+      {failure, Data}
   end.
 
 
@@ -154,22 +134,24 @@ serialize_struct({pull, N}) ->
 serialize_map(Map) ->
   Size = maps:size(Map),
   {PrefixLen, Prefix} = if
-                          Size < 16#10 -> {1, <<(16#A0 + Size):8>>};
-                          Size < 16#100 -> {2, <<16#D8:8, Size:8>>};
+                          Size < 16#10 -> {1, <<(16#A0 + Size):8/unsigned-integer>>};
+                          Size < 16#100 -> {2, <<16#D8:8, Size:8/unsigned-integer>>};
                           Size < 16#10000 -> {3, <<16#D9:8, Size:16/big-unsigned-integer>>};
                           Size < 16#100000000 -> {5, <<16#DA:8, Size:32/big-unsigned-integer>>};
                           true -> throw("Map header size out of range")
                         end,
-  Collect = fun(K, V, {CumLen, Cum}) ->
-    {KeyLen, Key} = serialize_string(atom_to_list(K)),
-    {ValLen, Val} = if
-                      is_integer(V) ->
-                        serialize_integer(V);
-                      true ->
-                        serialize_string(V)
-                    end,
-    {CumLen + KeyLen + ValLen, Cum ++ Key ++ Val}
-            end,
+  Collect =
+    fun(K, V, {CumLen, Cum}) ->
+      {KeyLen, Key} = serialize_string(atom_to_list(K)),
+      {ValLen, Val} =
+        if
+          is_integer(V) ->
+            serialize_integer(V);
+          true ->
+            serialize_string(V)
+        end,
+      {CumLen + KeyLen + ValLen, Cum ++ Key ++ Val}
+    end,
   {Len, Collected} = maps:fold(Collect, {0, []}, Map),
   {PrefixLen + Len, [Prefix] ++ Collected}.
 
@@ -179,32 +161,33 @@ serialize_map(Map) ->
 serialize_string(Str) ->
   Bin = unicode:characters_to_binary(Str),
   StrLen = byte_size(Bin),
-  {PrefixLen, Prefix} = if
-                          StrLen < 16#10 -> {1, <<(16#80 + StrLen):8>>};
-                          StrLen < 16#100 -> {2, <<16#D0:8, StrLen:8>>};
-                          StrLen < 16#10000 -> {3, <<16#D1:8, StrLen:16/big-unsigned-integer>>};
-                          StrLen < 16#100000000 -> {5, <<16#D2:8, StrLen:32/big-unsigned-integer>>};
-                          true -> throw("String header size out of range")
-                        end,
+  {PrefixLen, Prefix} =
+    if
+      StrLen < 16#10 -> {1, <<(16#80 + StrLen):8>>};
+      StrLen < 16#100 -> {2, <<16#D0:8, StrLen:8>>};
+      StrLen < 16#10000 -> {3, <<16#D1:8, StrLen:16/big-unsigned-integer>>};
+      StrLen < 16#100000000 -> {5, <<16#D2:8, StrLen:32/big-unsigned-integer>>};
+      true -> throw("String header size out of range")
+    end,
   {PrefixLen + StrLen, [Prefix, <<Bin/binary>>]}.
 
 
 %% @private
 %% @doc Serialize an integer
 serialize_integer(Int) ->
-  {Len, Bin} = if
-  % Rearrange for performance?
-                 Int >= -9223372036854775808 andalso Int =< -2147483649 -> {9, <<16#CB:8, Int:64/big-signed-integer>>};
-                 Int >= -2147483648 andalso Int =< -32769 -> {5, <<16#CA:8, Int:32/big-signed-integer>>};
-                 Int >= -32768 andalso Int =< -129 -> {3, <<16#C9:8, Int:16/big-signed-integer>>};
-                 Int >= -128 andalso Int =< -17 -> {2, <<16#C8:8, Int:8/big-signed-integer>>};
-                 Int >= -16 andalso Int =< + 127 -> {1, <<Int:8/big-signed-integer>>};
-                 Int >= + 128 andalso Int =< + 32767 -> {3, <<16#C9:8, Int:16/big-signed-integer>>};
-                 Int >= + 32768 andalso Int =< + 2147483647 -> {5, <<16#CA:8, Int:32/big-signed-integer>>};
-                 Int >= + 2147483648 andalso Int =< + 9223372036854775807 ->
-                   {9, <<16#CB:8, Int:64/big-signed-integer>>};
-                 true -> throw("Integer size out of range")
-               end,
+  {Len, Bin} =
+    if
+    % Rearrange for performance?
+      Int >= -9223372036854775808 andalso Int =< -2147483649 -> {9, <<16#CB:8, Int:64/big-signed-integer>>};
+      Int >= -2147483648 andalso Int =< -32769 -> {5, <<16#CA:8, Int:32/big-signed-integer>>};
+      Int >= -32768 andalso Int =< -129 -> {3, <<16#C9:8, Int:16/big-signed-integer>>};
+      Int >= -128 andalso Int =< -17 -> {2, <<16#C8:8, Int:8/signed-integer>>};
+      Int >= -16 andalso Int =< + 127 -> {1, <<Int:8/signed-integer>>};
+      Int >= + 128 andalso Int =< + 32767 -> {3, <<16#C9:8, Int:16/big-signed-integer>>};
+      Int >= + 32768 andalso Int =< + 2147483647 -> {5, <<16#CA:8, Int:32/big-signed-integer>>};
+      Int >= + 2147483648 andalso Int =< + 9223372036854775807 -> {9, <<16#CB:8, Int:64/big-signed-integer>>};
+      true -> throw("Integer size out of range")
+    end,
   {Len, [<<Bin/binary>>]}.
 
 
@@ -212,7 +195,7 @@ serialize_integer(Int) ->
 %% @doc Deserialize a struct
 deserialize_struct(Sock, Timeout, ExpectedSize) ->
   % Does always contain a map
-  {Size, Value} = deserialize_value(Sock, Timeout),
+  {Size, Value} = deserialize_object(Sock, Timeout),
   case Size rem 16#100 of
     ExpectedSize ->
       {ok, Value};
@@ -225,12 +208,22 @@ deserialize_struct(Sock, Timeout, ExpectedSize) ->
 
 
 %% @private
-%% @doc Deserialize an individual values
-deserialize_value(Sock, Timeout) ->
+%% @doc Deserialize an individual object
+deserialize_object(Sock, Timeout) ->
   case gen_tcp:recv(Sock, 1, Timeout) of
-    {ok, <<Byte:8>>} ->
+    {ok, <<Byte:8/unsigned-integer>>} ->
       {Type, PrefixSize, Size, Value} =
         if
+        % Special values
+          Byte == 16#C0 ->
+            {null, 0, 1, []};
+
+          Byte == 16#C2 ->
+            {boolean, 0, 1, [false]};
+
+          Byte == 16#C3 ->
+            {boolean, 0, 1, [true]};
+
         % Various strings
           Byte >= 16#80 andalso Byte =< 16#8F ->
             {string, 1, Byte - 16#80, []}; % A single byte for size
@@ -256,6 +249,10 @@ deserialize_value(Sock, Timeout) ->
           Byte >= -16 andalso Byte =< + 127 ->
             {integer, 0, 1, [Byte]}; % Special case
 
+        % Floating point
+          Byte == 16#C1 ->
+            {float, 1, 8, []};
+
         % Various maps
           Byte >= 16#A0 andalso Byte =< 16#AF ->
             {map, 1, Byte - 16#A0, []};
@@ -274,19 +271,37 @@ deserialize_value(Sock, Timeout) ->
             {ok, <<SpecifiedSize/big-unsigned-integer>>} = gen_tcp:recv(Sock, SizeOfSize, Timeout),
             {list, SizeOfSize, SpecifiedSize, []};
 
+        % Various structs
+          Byte >= 16#B0 andalso Byte =< 16#BF ->
+            {struct, 1, Byte - 16#B0, []};
+
+          Byte >= 16#DC andalso Byte =< 16#DD ->
+            SizeOfSize = (Byte - 16#DC) + 1, % Variable number of bytes for size
+            {ok, <<SpecifiedSize/big-unsigned-integer>>} = gen_tcp:recv(Sock, SizeOfSize, Timeout),
+            {struct, SizeOfSize, SpecifiedSize, []};
+
 
           true ->
-            throw(io:format("Protocol violation: Cannot determine context for value, indice: ~.16B", [Byte]))
+            throw(io:format("Protocol violation: Cannot determine context from marker \"~.16B\"", [Byte]))
         end,
 
       case Type of
+        null ->
+          {Size, Value};
+
+        boolean ->
+          {Size, Value};
+
         integer ->
           case PrefixSize of
             0 ->
-              {PrefixSize + Size, Value};
+              {Size, Value};
             _ ->
               {PrefixSize + Size, deserialize_integer(Sock, Timeout, Size)}
           end;
+
+        float ->
+          {PrefixSize + Size, deserialize_float(Sock, Timeout, Size)};
 
         string ->
           {PrefixSize + Size, deserialize_string(Sock, Timeout, Size)};
@@ -298,16 +313,17 @@ deserialize_value(Sock, Timeout) ->
 
         list ->
           {ListSize, List} = deserialize_list_elements(Sock, Timeout, Size),
-          {PrefixSize + ListSize, List}
+          {PrefixSize + ListSize, List};
+
+        struct ->
+          throw({not_implemented, io:format("embedded struct with ~.10B fields", [Size])})
       end;
 
-    {error, timeout} = Cause ->
-      error_logger:error_msg("Timeout while waiting for string size: After ", [Timeout]),
-      Cause;
+    {error, timeout} ->
+      throw({timeout, io:format("Timeout while waiting for deserealizing object: After ~.10B ms", [Timeout])});
 
     Error ->
-      error_logger:error_msg("Could not read string size in reply from server: ", [Error]),
-      {error, read_failure}
+      throw({read_error, Error})
   end.
 
 %% @private
@@ -317,13 +333,26 @@ deserialize_integer(Sock, Timeout, Size) ->
     {ok, <<Integer:Size/big-signed-integer>>} ->
       Integer;
 
-    {error, timeout} = Cause ->
-      error_logger:error_msg("Timeout while waiting for integer: After ", [Timeout]),
-      Cause;
+    {error, timeout} ->
+      throw({timeout, io:format("Timeout while waiting for integer: After ~.10B ms", [Timeout])});
 
     Error ->
-      error_logger:error_msg("Could not read integer in reply from server: ", [Error]),
-      {error, read_failure}
+      throw({read_error, Error})
+  end.
+
+%% @private
+%% @doc Deserialize an individual floating point number
+deserialize_float(Sock, Timeout, Size) ->
+  Bits = Size * 8,
+  case gen_tcp:recv(Sock, Size, Timeout) of
+    {ok, <<Float:Bits/float-unit:1>>} ->
+      Float;
+
+    {error, timeout} ->
+      throw({timeout, io:format("Timeout while waiting for floating point number: After ~.10B ms", [Timeout])});
+
+    Error ->
+      throw({read_error, Error})
   end.
 
 %% @private
@@ -331,15 +360,17 @@ deserialize_integer(Sock, Timeout, Size) ->
 deserialize_string(Sock, Timeout, Size) ->
   case gen_tcp:recv(Sock, Size, Timeout) of
     {ok, <<Bin/binary>>} ->
-      binary_to_list(Bin);
+      case unicode:characters_to_list(Bin) of
+        {error, _S, _Rest} -> throw({invalid_string, Bin});
+        {incomplete, _S, _Rest} -> throw({invalid_string, Bin});
+        String -> String
+      end;
 
-    {error, timeout} = Cause ->
-      error_logger:error_msg("Timeout while waiting for string: After ", [Timeout]),
-      Cause;
+    {error, timeout} ->
+      throw({timeout, io:format("Timeout while waiting for string: After ~.10B ms", [Timeout])});
 
     Error ->
-      error_logger:error_msg("Could not read string in reply from server: ", [Error]),
-      {error, read_failure}
+      throw({read_error, Error})
   end.
 
 
@@ -347,8 +378,8 @@ deserialize_string(Sock, Timeout, Size) ->
 %% @doc Deserialize (key, value) pairs from a map of known size/length
 deserialize_map_pairs(_Sock, _Timeout, 0) -> {0, []};
 deserialize_map_pairs(Sock, Timeout, Count) ->
-  {KeySize, Key} = deserialize_value(Sock, Timeout), % should be a string
-  {ValueSize, Value} = deserialize_value(Sock, Timeout),
+  {KeySize, Key} = deserialize_object(Sock, Timeout), % should be a string
+  {ValueSize, Value} = deserialize_object(Sock, Timeout),
   {SizeOfRest, Rest} = deserialize_map_pairs(Sock, Timeout, Count - 1), % currently not tail recursion
   {KeySize + ValueSize + SizeOfRest, [{list_to_atom(Key), Value}] ++ Rest}.
 
@@ -357,7 +388,7 @@ deserialize_map_pairs(Sock, Timeout, Count) ->
 %% @doc Deserialize a elements from a list of known size/length
 deserialize_list_elements(_Sock, _Timeout, 0) -> {0, []};
 deserialize_list_elements(Sock, Timeout, Count) ->
-  {ElementSize, Element} = deserialize_value(Sock, Timeout),
+  {ElementSize, Element} = deserialize_object(Sock, Timeout),
   {SizeOfRest, Rest} = deserialize_list_elements(Sock, Timeout, Count - 1), % currently not tail recursion
   {ElementSize + SizeOfRest, [Element] ++ Rest}.
 

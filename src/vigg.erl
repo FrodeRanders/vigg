@@ -43,8 +43,7 @@ connect(Host, Port, Username, Password, Opts) ->
   connect(C, Host, Port, Username, Password, Opts).
 
 connect(C, Host, Port, Username, Password, Opts) ->
-  case gen_server:call(C,
-    {connect, Host, Port, Username, Password, Opts}, infinity) of
+  case gen_server:call(C, {connect, Host, Port, Username, Password, Opts}, infinity) of
     connected ->
       {ok, C};
     Error = {error, _} ->
@@ -52,8 +51,7 @@ connect(C, Host, Port, Username, Password, Opts) ->
   end.
 
 disconnect(C) ->
-  case gen_server:call(C,
-    {disconnect}, infinity) of
+  case gen_server:call(C, {disconnect}, infinity) of
     disconnected ->
       {ok, C};
     Error = {error, _} ->

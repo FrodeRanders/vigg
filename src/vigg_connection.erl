@@ -19,7 +19,7 @@
 
 -define(SERVER, ?MODULE).
 
--define(PRINT(S, A), io:fwrite("~w(~w): " ++ S, [?MODULE,?LINE|A])).
+-define(PRINT(S, A), io:fwrite("~w(~w): " ++ S, [?MODULE, ?LINE | A])).
 %%-define(PRINT(S, A), true).
 
 %%--------------------------------------------------------------------
@@ -34,7 +34,6 @@
   timeout = 5000,
   state = new
 }).
-
 
 
 %%%===================================================================
@@ -168,7 +167,8 @@ call({request, Requests}, State) ->
     ready ->
       {_, Message} = vigg_packstream:serialize(Requests),
       gen_tcp:send(Sock, Message), % TODO error handling
-      {ok, Reply} = vigg_packstream:deserialize(Sock, State#vigg_session.timeout),
+
+      {ok, Reply} = consume_reply(Sock, State#vigg_session.timeout),
       {reply, Reply, State};
 
     _ ->
@@ -182,6 +182,25 @@ call(Request, State) ->
 
 
 %% @private
+%% Consume reply
+consume_reply(Sock, Timeout) ->
+  Consumer = fun(<<Blob/binary>>) -> vigg_packstream:deserialize(Sock, Timeout, Blob) end,
+  Reply = recv(Sock, 4, Timeout, Consumer),
+  recv(Sock, 2, Timeout, fun(<<16#0:16>>) -> {ok, Reply} end).
+
+%% @private
+recv(Sock, Size, Timeout, Consumer) ->
+  case gen_tcp:recv(Sock, Size, Timeout) of
+    {ok, <<Data/binary>>} -> Consumer(Data);
+
+    {error, timeout} ->
+      throw({timeout, io:format("Timeout while reading: After ~.10B ms", [Timeout])});
+
+    Error ->
+      throw({read_error, Error})
+  end.
+
+%% @private
 %% @doc Negotiate protocol version with server
 negotiate(Sock, Timeout) ->
   Message = [
@@ -193,9 +212,8 @@ negotiate(Sock, Timeout) ->
     {ok, <<4:32>>} ->
       {ok, #vigg_session{socket = Sock, state = negotiated}};
 
-    {error, timeout} = Cause ->
-      error_logger:error_msg("Timeout while waiting for handshake reply: After ", [Timeout]),
-      Cause;
+    {error, timeout} ->
+      throw({timeout, io:format("Timeout while shaking hands with server: After ~.10B ms", [Timeout])});
 
     Error ->
       error_logger:error_msg("Could not negotiate with server: ", [Error]),
@@ -208,7 +226,7 @@ authenticate(Sock, Timeout, UserName, Password, _Options) ->
   {_MsgLen, Msg} = vigg_packstream:serialize([{hello, #{principal => UserName, scheme => "basic", credentials => Password, user_agent => "vigg/1"}}]),
   gen_tcp:send(Sock, Msg), % TODO error handling
 
-  {ok, Reply} = vigg_packstream:deserialize(Sock, Timeout),
+  {ok, Reply} = consume_reply(Sock, Timeout),
   case Reply of
     {success, Map} ->
       Server = maps:get(server, Map),
@@ -218,6 +236,6 @@ authenticate(Sock, Timeout, UserName, Password, _Options) ->
 
     Other ->
       error_logger:error_msg("Could not authenticate with server: ", [Other]),
-      {error, negotiation_failed}
+      {error, authentication_failed}
   end.
 
