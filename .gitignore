@@ -4,6 +4,10 @@
 *.plt
 erl_crash.dump
 .concrete/DEV_MODE
+*.swp
+*.swo
+*~
+.DS_Store
 
 # rebar 2.x
 .rebar
@@ -15,3 +19,8 @@ deps
 .rebar3
 _build/
 _checkouts/
+rebar3.crashdump
+
+# IntelliJ
+.idea
+*.iml
