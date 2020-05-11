@@ -7,6 +7,7 @@ erl_crash.dump
 *.swp
 *.swo
 *~
+*.lock
 .DS_Store
 
 # rebar 2.x
