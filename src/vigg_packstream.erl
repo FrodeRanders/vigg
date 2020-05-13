@@ -10,7 +10,7 @@
 -author("Frode.Randers@forsakringskassan.se").
 
 %% API
--export([serialize/1, deserialize/3]).
+-export([serialize/1, deserialize/1]).
 
 
 -define(HELLO, 16#01).
@@ -35,36 +35,121 @@
 
 %% @doc Serializes a list of Bolt requests into Message(s)
 serialize([H | T]) ->
-  {ALen, A} = serialize_struct(H),
-  {BLen, B} = serialize(T),
-  {ALen + BLen, A ++ B};
-serialize([]) -> {0, []}.
+  A = serialize_struct(H),
+  B = serialize(T),
+  A ++ B;
+serialize([]) -> [].
+
+%% @doc Deserializes reply from server
+deserialize(<<16#B1:8, ?SUCCESS:8, Rest/binary>>) ->
+  {success, deserialize(Rest)};
+
+deserialize(<<16#B1:8, ?RECORD:8, Rest/binary>>) ->
+  {record, deserialize(Rest)};
+
+deserialize(<<16#B1:8, ?IGNORED:8, Rest/binary>>) ->
+  {ignored, deserialize(Rest)};
+
+deserialize(<<16#B1:8, ?FAILURE:8, Rest/binary>>) ->
+  {failure, deserialize(Rest)};
+
+deserialize(<<16#C0, Rest/binary>>) ->
+  [null | deserialize(Rest)];
+
+deserialize(<<16#C1, Num/float-unit:1, Rest/binary>>) ->
+  [Num | deserialize(Rest)];
+
+deserialize(<<16#C2, Rest/binary>>) ->
+  [false | deserialize(Rest)];
+
+deserialize(<<16#C3, Rest/binary>>) ->
+  [true | deserialize(Rest)];
+
+deserialize(<<16#8:4/unsigned-integer, Len:4/unsigned-integer, String:Len/binary, Rest/binary>>) ->
+  [deserialize_string(String) | deserialize(Rest)];
+
+deserialize(<<16#D0, Len:8/unsigned-integer, String:Len/binary, Rest/binary>>) ->
+  [deserialize_string(String) | deserialize(Rest)];
+
+deserialize(<<16#D1, Len:16/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
+  [deserialize_string(String) | deserialize(Rest)];
+
+deserialize(<<16#D2, Len:32/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
+  [deserialize_string(String) | deserialize(Rest)];
+
+deserialize(<<16#C8, Integer:8/signed-integer, Rest/binary>>) ->
+  [Integer | deserialize(Rest)];
+
+deserialize(<<16#C9, Integer:16/big-signed-integer, Rest/binary>>) ->
+  [Integer | deserialize(Rest)];
+
+deserialize(<<16#CA, Integer:32/big-signed-integer, Rest/binary>>) ->
+  [Integer | deserialize(Rest)];
+
+deserialize(<<16#CB, Integer:64/big-signed-integer, Rest/binary>>) ->
+  [Integer | deserialize(Rest)];
+
+deserialize(<<16#A:4, Len:4/unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
+  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(List) | DeserializeRest];
+
+deserialize(<<16#D8, Len:8/unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
+  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(List) | DeserializeRest];
+
+deserialize(<<16#D9, Len:16/big-unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
+  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(List) | DeserializeRest];
+
+deserialize(<<16#DA, Len:32/big-unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
+  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(List) | DeserializeRest];
+
+deserialize(<<16#9:4, Len:4/unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializeRest];
+
+deserialize(<<16#D4, Len:8/unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializeRest];
+
+deserialize(<<16#D5, Len:16/big-unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializeRest];
+
+deserialize(<<16#D6, Len:32/big-unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializeRest];
+
+deserialize(<<16#B:4, Len:4/unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializeRest]; %% I need to rethink this! What would be a suitable data type here?
+
+deserialize(<<16#DC, Len:8/unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializeRest];
+
+deserialize(<<16#DD, Len:16/big-unsigned-integer, Rest/binary>>) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializeRest];
+
+deserialize(<<Integer:8/signed-integer, Rest/binary>>) ->  % have to be last!
+  [Integer | deserialize(Rest)].
 
 
-%% @doc Deserialize reply from server
-%% We observe that these reply structs only contain one field
-deserialize(Sock, Timeout, Head) ->
-  case Head of
-    <<Size:16/big-unsigned-integer, 16#B1:8, ?SUCCESS:8>> ->
-      ExpectedSize = Size - 2, % TODO arithmetics around wrapping need to be verified!
-      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-      {success, Data};
 
-    <<Size:16/big-unsigned-integer, 16#B1:8, ?RECORD:8>> ->
-      ExpectedSize = Size - 2,
-      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-      {record, Data};
 
-    <<Size:16/big-unsigned-integer, 16#B1:8, ?IGNORED:8>> ->
-      ExpectedSize = Size - 2,
-      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-      {ignored, Data};
-
-    <<Size:16/big-unsigned-integer, 16#B1:8, ?FAILURE:8>> ->
-      ExpectedSize = Size - 2,
-      {ok, Data} = deserialize_struct(Sock, Timeout, ExpectedSize),
-      {failure, Data}
-  end.
 
 
 %%%===================================================================
@@ -75,7 +160,7 @@ deserialize(Sock, Timeout, Head) ->
 %% @doc Authenticate the session
 serialize_struct({hello, Params}) ->
   {MapLen, Map} = serialize_map(Params),
-  Len = (MapLen + 2) rem 16#100, % add 2 for struct header
+  Len = (MapLen + 2), % add 2 for struct header
   {6 + MapLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?HELLO:8>>] ++ Map ++ [<<0:16>>]};
 
 %% @private
@@ -94,14 +179,14 @@ serialize_struct({run, Statement, Params, Options}) ->
   {StrLen, Str} = serialize_string(Statement),
   {MapLen, Map} = serialize_map(Params),
   {OptLen, Opt} = serialize_map(Options),
-  Len = (StrLen + MapLen + OptLen + 2) rem 16#100, % add 2 for struct header
+  Len = StrLen + MapLen + OptLen + 2, % add 2 for struct header
   {6 + StrLen + MapLen + OptLen, [<<Len:16/big-unsigned-integer, 16#B3:8, ?RUN:8>>] ++ Str ++ Map ++ Opt ++ [<<0:16>>]};
 
 %% @private
 %% @doc Begin transaction
 serialize_struct({tx_begin, Options}) ->
   {OptLen, Opt} = serialize_map(Options),
-  Len = (OptLen + 2) rem 16#100, % add 2 for struct header
+  Len = OptLen + 2, % add 2 for struct header
   {6 + OptLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?BEGIN:8>>] ++ Opt ++ [<<0:16>>]};
 
 %% @private
@@ -118,14 +203,14 @@ serialize_struct({tx_rollback}) ->
 %% @doc Discard last N issued statement(s)
 serialize_struct({discard, N}) ->
   {MapLen, Map} = serialize_map(#{n => N}),
-  Len = (MapLen + 2) rem 16#100, % add 2 for struct header
+  Len = MapLen + 2, % add 2 for struct header
   {6 + MapLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?DISCARD:8>>] ++ Map ++ [<<0:16>>]};
 
 %% @private
 %% @doc Pull N results
 serialize_struct({pull, N}) ->
   {MapLen, Map} = serialize_map(#{n => N}),
-  Len = (MapLen + 2) rem 16#100, % add 2 for struct header
+  Len = MapLen + 2, % add 2 for struct header
   {6 + MapLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?PULL:8>>] ++ Map ++ [<<0:16>>]}.
 
 
@@ -133,13 +218,14 @@ serialize_struct({pull, N}) ->
 %% @doc Serialize a Map
 serialize_map(Map) ->
   Size = maps:size(Map),
-  {PrefixLen, Prefix} = if
-                          Size < 16#10 -> {1, <<(16#A0 + Size):8/unsigned-integer>>};
-                          Size < 16#100 -> {2, <<16#D8:8, Size:8/unsigned-integer>>};
-                          Size < 16#10000 -> {3, <<16#D9:8, Size:16/big-unsigned-integer>>};
-                          Size < 16#100000000 -> {5, <<16#DA:8, Size:32/big-unsigned-integer>>};
-                          true -> throw("Map header size out of range")
-                        end,
+  {PrefixLen, Prefix} =
+    if
+      Size < 16#10 -> {1, <<(16#A0 + Size):8/unsigned-integer>>};
+      Size < 16#100 -> {2, <<16#D8:8, Size:8/unsigned-integer>>};
+      Size < 16#10000 -> {3, <<16#D9:8, Size:16/big-unsigned-integer>>};
+      Size < 16#100000000 -> {5, <<16#DA:8, Size:32/big-unsigned-integer>>};
+      true -> throw("Map header size out of range")
+    end,
   Collect =
     fun(K, V, {CumLen, Cum}) ->
       {KeyLen, Key} = serialize_string(atom_to_list(K)),
@@ -191,204 +277,16 @@ serialize_integer(Int) ->
   {Len, [<<Bin/binary>>]}.
 
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
 %% @private
-%% @doc Deserialize a struct
-deserialize_struct(Sock, Timeout, ExpectedSize) ->
-  % Does always contain a map
-  {Size, Value} = deserialize_object(Sock, Timeout),
-  case Size rem 16#100 of
-    ExpectedSize ->
-      {ok, Value};
-
-    L ->
-      error_logger:error_msg("Protocol violation: Struct size mismatch: Was ~.16B (~.16B modulo 0x100), expected ~.16B", [Size, L, ExpectedSize]),
-      {error, mismatch}
-
+%% @doc Deserialize an individual string
+deserialize_string(Bin) ->
+  case unicode:characters_to_list(Bin) of
+    {error, _S, _Rest} -> throw({invalid_string, Bin});
+    {incomplete, _S, _Rest} -> throw({invalid_string, Bin});
+    String -> String
   end.
-
-
-%% @private
-%% @doc Deserialize an individual object
-deserialize_object(Sock, Timeout) ->
-  case gen_tcp:recv(Sock, 1, Timeout) of
-    {ok, <<Byte:8/unsigned-integer>>} ->
-      {Type, PrefixSize, Size, Value} =
-        if
-        % Special values
-          Byte == 16#C0 ->
-            {null, 0, 1, []};
-
-          Byte == 16#C2 ->
-            {boolean, 0, 1, [false]};
-
-          Byte == 16#C3 ->
-            {boolean, 0, 1, [true]};
-
-        % Various strings
-          Byte >= 16#80 andalso Byte =< 16#8F ->
-            {string, 1, Byte - 16#80, []}; % A single byte for size
-
-          Byte >= 16#D0 andalso Byte =< 16#D2 ->
-            SizeOfSize = (Byte - 16#D0) + 1, % Variable number of bytes for size
-            {ok, <<SpecifiedSize/big-unsigned-integer>>} = gen_tcp:recv(Sock, SizeOfSize, Timeout),
-            {string, SizeOfSize, SpecifiedSize, []};
-
-        % Various integers
-          Byte == 16#CB ->
-            {integer, 1, 8, []};
-
-          Byte == 16#CA ->
-            {integer, 1, 4, []};
-
-          Byte == 16#C9 ->
-            {integer, 1, 2, []};
-
-          Byte == 16#C8 ->
-            {integer, 1, 1, []};
-
-          Byte >= -16 andalso Byte =< + 127 ->
-            {integer, 0, 1, [Byte]}; % Special case
-
-        % Floating point
-          Byte == 16#C1 ->
-            {float, 1, 8, []};
-
-        % Various maps
-          Byte >= 16#A0 andalso Byte =< 16#AF ->
-            {map, 1, Byte - 16#A0, []};
-
-          Byte >= 16#D8 andalso Byte =< 16#DA ->
-            SizeOfSize = Byte - 16#D8 + 1,
-            {ok, <<SpecifiedSize/big-unsigned-integer>>} = gen_tcp:recv(Sock, SizeOfSize, Timeout),
-            {map, SizeOfSize, SpecifiedSize, []};
-
-        % Various lists
-          Byte >= 16#90 andalso Byte =< 16#9F ->
-            {list, 1, Byte - 16#90, []};
-
-          Byte >= 16#D4 andalso Byte =< 16#D6 ->
-            SizeOfSize = (Byte - 16#D4) + 1, % Variable number of bytes for size
-            {ok, <<SpecifiedSize/big-unsigned-integer>>} = gen_tcp:recv(Sock, SizeOfSize, Timeout),
-            {list, SizeOfSize, SpecifiedSize, []};
-
-        % Various structs
-          Byte >= 16#B0 andalso Byte =< 16#BF ->
-            {struct, 1, Byte - 16#B0, []};
-
-          Byte >= 16#DC andalso Byte =< 16#DD ->
-            SizeOfSize = (Byte - 16#DC) + 1, % Variable number of bytes for size
-            {ok, <<SpecifiedSize/big-unsigned-integer>>} = gen_tcp:recv(Sock, SizeOfSize, Timeout),
-            {struct, SizeOfSize, SpecifiedSize, []};
-
-
-          true ->
-            throw(io:format("Protocol violation: Cannot determine context from marker \"~.16B\"", [Byte]))
-        end,
-
-      case Type of
-        null ->
-          {Size, Value};
-
-        boolean ->
-          {Size, Value};
-
-        integer ->
-          case PrefixSize of
-            0 ->
-              {Size, Value};
-            _ ->
-              {PrefixSize + Size, deserialize_integer(Sock, Timeout, Size)}
-          end;
-
-        float ->
-          {PrefixSize + Size, deserialize_float(Sock, Timeout, Size)};
-
-        string ->
-          {PrefixSize + Size, deserialize_string(Sock, Timeout, Size)};
-
-        map ->
-          {MapSize, List} = deserialize_map_pairs(Sock, Timeout, Size),
-          Map = maps:from_list(List),
-          {PrefixSize + MapSize, Map};
-
-        list ->
-          {ListSize, List} = deserialize_list_elements(Sock, Timeout, Size),
-          {PrefixSize + ListSize, List};
-
-        struct ->
-          throw({not_implemented, io:format("embedded struct with ~.10B fields", [Size])})
-      end;
-
-    {error, timeout} ->
-      throw({timeout, io:format("Timeout while waiting for deserealizing object: After ~.10B ms", [Timeout])});
-
-    Error ->
-      throw({read_error, Error})
-  end.
-
-%% @private
-%% @doc Deserialize an individual integer of known size
-deserialize_integer(Sock, Timeout, Size) ->
-  case gen_tcp:recv(Sock, Size, Timeout) of
-    {ok, <<Integer:Size/big-signed-integer>>} ->
-      Integer;
-
-    {error, timeout} ->
-      throw({timeout, io:format("Timeout while waiting for integer: After ~.10B ms", [Timeout])});
-
-    Error ->
-      throw({read_error, Error})
-  end.
-
-%% @private
-%% @doc Deserialize an individual floating point number
-deserialize_float(Sock, Timeout, Size) ->
-  Bits = Size * 8,
-  case gen_tcp:recv(Sock, Size, Timeout) of
-    {ok, <<Float:Bits/float-unit:1>>} ->
-      Float;
-
-    {error, timeout} ->
-      throw({timeout, io:format("Timeout while waiting for floating point number: After ~.10B ms", [Timeout])});
-
-    Error ->
-      throw({read_error, Error})
-  end.
-
-%% @private
-%% @doc Deserialize an individual string of known length
-deserialize_string(Sock, Timeout, Size) ->
-  case gen_tcp:recv(Sock, Size, Timeout) of
-    {ok, <<Bin/binary>>} ->
-      case unicode:characters_to_list(Bin) of
-        {error, _S, _Rest} -> throw({invalid_string, Bin});
-        {incomplete, _S, _Rest} -> throw({invalid_string, Bin});
-        String -> String
-      end;
-
-    {error, timeout} ->
-      throw({timeout, io:format("Timeout while waiting for string: After ~.10B ms", [Timeout])});
-
-    Error ->
-      throw({read_error, Error})
-  end.
-
-
-%% @private
-%% @doc Deserialize (key, value) pairs from a map of known size/length
-deserialize_map_pairs(_Sock, _Timeout, 0) -> {0, []};
-deserialize_map_pairs(Sock, Timeout, Count) ->
-  {KeySize, Key} = deserialize_object(Sock, Timeout), % should be a string
-  {ValueSize, Value} = deserialize_object(Sock, Timeout),
-  {SizeOfRest, Rest} = deserialize_map_pairs(Sock, Timeout, Count - 1), % currently not tail recursion
-  {KeySize + ValueSize + SizeOfRest, [{list_to_atom(Key), Value}] ++ Rest}.
-
-
-%% @private
-%% @doc Deserialize a elements from a list of known size/length
-deserialize_list_elements(_Sock, _Timeout, 0) -> {0, []};
-deserialize_list_elements(Sock, Timeout, Count) ->
-  {ElementSize, Element} = deserialize_object(Sock, Timeout),
-  {SizeOfRest, Rest} = deserialize_list_elements(Sock, Timeout, Count - 1), % currently not tail recursion
-  {ElementSize + SizeOfRest, [Element] ++ Rest}.
-
