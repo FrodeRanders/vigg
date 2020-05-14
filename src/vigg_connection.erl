@@ -175,7 +175,7 @@ call({request, Requests}, State) ->
       ok = gen_tcp:send(Sock, Message),
 
       % Receive reply
-      Reply = read_reply(Sock, Timeout),
+      Reply = lists:flatten(read_reply(Sock, Timeout)),
       {reply, Reply, State};
 
     _ ->
@@ -215,8 +215,7 @@ read_reply(Sock, Timeout, ReadSofar) ->
       [Data | ReadSofar];
 
     {error, timeout} ->
-      ?PRINT("No more data~n", []),
-      ReadSofar;
+     ReadSofar;
 
     Error ->
       error_logger:error_msg("Could not read additional data: ~p", [Error]),
@@ -268,9 +267,9 @@ authenticate(Sock, Timeout, UserName, Password, _Options) ->
     [{hello, #{principal => UserName, scheme => "basic", credentials => Password, user_agent => "vigg/1"}}]
   ),
   ok = gen_tcp:send(Sock, Message),
-  [Reply | _] = read_reply(Sock, Timeout),
-  {success, Response} = Reply,
-  case Response of
+  ReplyMap = maps:from_list(lists:flatten(read_reply(Sock, Timeout))),
+
+  case maps:get(success, ReplyMap) of
     [Map | _] ->
       Server = maps:get("server", Map),
       ConnectionId = maps:get("connection_id", Map),

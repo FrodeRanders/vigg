@@ -36,9 +36,9 @@ and the results...
     
     Eshell V10.5  (abort with ^G)
     1> util:handshake().
-    vigg_connection(216): Connected to "Neo4j/4.0.4" ("bolt-281")
-    util(29): Sending [{run,"RETURN 1 AS num",#{},#{}},{pull,1000}]
-    util(33): Got {success,#{fields => ["num"],t_first => [1]}}
-    {ok,<0.125.0>}
+    vigg_connection(276): Connected to "Neo4j/4.0.4" ("bolt-301")
+    util(26): Sending [{run,"RETURN 1 AS num",#{},#{}},{pull,1000}]
+    util(28): Got [{success,[#{"fields" => ["num"],"t_first" => 1}]},{record,[1]}]
+    {ok,<0.131.0>}
     
 

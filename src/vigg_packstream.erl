@@ -41,18 +41,6 @@ serialize([H | T]) ->
 serialize([]) -> [].
 
 %% @doc Deserializes reply from server
-deserialize(<<16#B1:8, ?SUCCESS:8, Rest/binary>>) ->
-  {success, deserialize(Rest)};
-
-deserialize(<<16#B1:8, ?RECORD:8, Rest/binary>>) ->
-  {record, deserialize(Rest)};
-
-deserialize(<<16#B1:8, ?IGNORED:8, Rest/binary>>) ->
-  {ignored, deserialize(Rest)};
-
-deserialize(<<16#B1:8, ?FAILURE:8, Rest/binary>>) ->
-  {failure, deserialize(Rest)};
-
 deserialize(<<16#C0:8, Rest/binary>>) ->
   [null | deserialize(Rest)];
 
@@ -90,59 +78,37 @@ deserialize(<<16#CB:8, Integer:64/big-signed-integer, Rest/binary>>) ->
   [Integer | deserialize(Rest)];
 
 deserialize(<<16#A:4, Len:4/unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
+  deserialize_map(Len, Rest);
 
 deserialize(<<16#D8:8, Len:8/unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
+  deserialize_map(Len, Rest);
 
 deserialize(<<16#D9:8, Len:16/big-unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
+  deserialize_map(Len, Rest);
 
 deserialize(<<16#DA:8, Len:32/big-unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
+  deserialize_map(Len, Rest);
 
 deserialize(<<16#9:4, Len:4/unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializedRest];
+  deserialize_list(Len, Rest);
 
 deserialize(<<16#D4:8, Len:8/unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializedRest];
+  deserialize_list(Len, Rest);
 
 deserialize(<<16#D5:8, Len:16/big-unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializedRest];
+  deserialize_list(Len, Rest);
 
 deserialize(<<16#D6:8, Len:32/big-unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializedRest];
+  deserialize_list(Len, Rest);
 
-%%deserialize(<<16#B:4, Len:4/unsigned-integer, Rest/binary>>) ->
-%%  % Continue with deserializing and then pick the Len first elements after the fact
-%%  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
-%%  [List | DeserializedRest]; %% TODO I need to rethink this! What would be a suitable data type here?
-%%
-%%deserialize(<<16#DC:8, Len:8/unsigned-integer, Rest/binary>>) ->
-%%  % Continue with deserializing and then pick the Len first elements after the fact
-%%  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
-%%  [List | DeserializedRest];  %% TODO I need to rethink this! What would be a suitable data type here?
-%%
-%%deserialize(<<16#DD:8, Len:16/big-unsigned-integer, Rest/binary>>) ->
-%%  % Continue with deserializing and then pick the Len first elements after the fact
-%%  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
-%%  [List | DeserializedRest];  %% TODO I need to rethink this! What would be a suitable data type here?
+deserialize(<<16#B:4, Len:4/unsigned-integer, Signature:8/unsigned-integer, Rest/binary>>) ->
+  deserialize_struct(Len, Signature, Rest);
+
+deserialize(<<16#DC:8, Len:8/unsigned-integer, Signature:8/unsigned-integer, Rest/binary>>) ->
+  deserialize_struct(Len, Signature, Rest);
+
+deserialize(<<16#DD:8, Len:16/big-unsigned-integer, Signature:8/unsigned-integer, Rest/binary>>) ->
+  deserialize_struct(Len, Signature, Rest);
 
 deserialize(<<Integer:8/signed-integer, Rest/binary>>) ->  % have to be last!
   [Integer | deserialize(Rest)];
@@ -295,11 +261,33 @@ deserialize_string(Bin) ->
     String -> String
   end.
 
+deserialize_map(Len, Rest) ->
+  % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
+  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(key_value_pairs(List)) | DeserializedRest].
+
+deserialize_list(Len, Rest) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializedRest].
+
+deserialize_struct(Len, Signature, Rest) ->
+  % Continue with deserializing and then pick the Len first elements after the fact
+  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+  Type =
+    case Signature of
+      ?SUCCESS -> success;
+      ?RECORD -> record;
+      ?IGNORED -> ignored;
+      ?FAILURE -> failure
+    end,
+  [{Type, lists:flatten(List)} | DeserializedRest].
+
 
 %% @private
 key_value_pairs(List) ->
   case List of
     [] -> [];
-    %[E1, E2 | Rest] -> [{list_to_atom(E1), E2}] ++ key_value_pairs(Rest)
-    [E1, E2 | Rest] -> [{E1, E2}] ++ key_value_pairs(Rest)
+    %[E1, E2 | Rest] -> [{list_to_atom(E1), E2} | key_value_pairs(Rest)]
+    [E1, E2 | Rest] -> [{E1, E2} | key_value_pairs(Rest)]
   end.
