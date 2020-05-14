@@ -149,7 +149,7 @@ call({disconnect}, State) ->
   Sock = State#vigg_session.socket,
   case State#vigg_session.state of
     ready ->
-      {_, Goodbye} = vigg_packstream:serialize([{goodbye}]),
+      Goodbye = vigg_packstream:serialize([{goodbye}]),
       ok = gen_tcp:send(Sock, Goodbye),
       ok = gen_tcp:close(Sock),
       {reply, disconnected, #vigg_session{}};
@@ -164,7 +164,6 @@ call({disconnect}, State) ->
 
 %% @private
 %% @doc Handle 'request' call
-%% {request,[{run,"RETURN 1 AS num",#{},#{}},{pull,1000}]}
 call({request, Requests}, State) ->
   Sock = State#vigg_session.socket,
   Timeout = State#vigg_session.timeout,
@@ -176,7 +175,7 @@ call({request, Requests}, State) ->
       ok = gen_tcp:send(Sock, Message),
 
       % Receive reply
-      {ok, Reply} = read_reply(Sock, Timeout),
+      Reply = read_reply(Sock, Timeout),
       {reply, Reply, State};
 
     _ ->
@@ -184,54 +183,60 @@ call({request, Requests}, State) ->
   end;
 
 call(Request, State) ->
-  error_logger:error_msg("Unknown call: ", [Request]),
+  error_logger:error_msg("Unknown call: ~p ~n", [Request]),
   {stop, unknown_request, State}.
 
 
-read_reply(Sock, Timeout) ->
-  read_reply(Sock, Timeout, []).
 
+%% @private
+read_reply(Sock, Timeout) ->
+  lists:reverse(read_reply(Sock, Timeout, [])).
+
+%% @private
 read_reply(Sock, Timeout, []) ->
   case gen_tcp:recv(Sock, 2, Timeout) of
     {ok, <<Size:16/big-unsigned-integer>>} ->
-      read_chunk(Sock, Size, Timeout);
+      ReadSofar = read_chunk(Sock, Timeout, Size),
+      read_reply(Sock, Timeout, [ReadSofar]);
 
-    {error, timeout} ->
-      throw({timeout, io:format("Timeout while reading reply: After ~.10B ms", [Timeout])});
+    {error, timeout} = Cause ->
+      error_logger:error_msg("Timeout while reading reply: After ~p ns", [Timeout]),
+      Cause;
 
     Error ->
-      error_logger:error_msg("Could not read reply: ", [Error]),
-      {error, connection_not_ready, #vigg_session{}}
+      error_logger:error_msg("Could not read reply: ~p", [Error]),
+      {error, Error}
   end;
 
 read_reply(Sock, Timeout, ReadSofar) ->
   case gen_tcp:recv(Sock, 2, 1) of
     {ok, <<Size:16/big-unsigned-integer>>} ->
-      {ok, Data} = read_chunk(Sock, Size, Timeout),
-      {ok, ReadSofar ++ Data};
+      Data = read_chunk(Sock, Timeout, Size),
+      [Data | ReadSofar];
 
     {error, timeout} ->
-      {ok, ReadSofar};
+      ?PRINT("No more data~n", []),
+      ReadSofar;
 
     Error ->
-      error_logger:error_msg("Could not read additional data: ", [Error]),
-      {error, connection_not_ready, #vigg_session{}}
+      error_logger:error_msg("Could not read additional data: ~p", [Error]),
+      {error, Error}
   end.
 
 
-%%
+%% @private
 read_chunk(Sock, Timeout, Size) ->
   case gen_tcp:recv(Sock, Size + 2, Timeout) of
-    {ok, <<Chunk/binary, 16#0:16>>} ->
-      Data = vigg_packstream:deserialize(Chunk),
-      {ok, Data};
+    {ok, <<Chunk:Size/binary, 16#0:16>>} ->
+      vigg_packstream:deserialize(Chunk);
 
-    {error, timeout} ->
-      throw({timeout, io:format("Timeout while reading reply: After ~.10B ms", [Timeout])});
+    {error, timeout} = Cause ->
+      error_logger:error_msg("Timeout while reading chunk: After ~p ms", [Timeout]),
+      Cause;
 
     Error ->
-      error_logger:error_msg("Could not read reply: ", [Error]),
-      throw({timeout, Error})
+      error_logger:error_msg("Could not read reply: ~p", [Error]),
+      {error, Error}
   end.
 
 %% @private
@@ -244,14 +249,14 @@ negotiate(Sock, Timeout) ->
   ok = gen_tcp:send(Sock, Message),
   case gen_tcp:recv(Sock, 4, Timeout) of
     {ok, <<4:32>>} ->
-      {ok, #vigg_session{socket = Sock, timeout=Timeout, state = negotiated}};
+      {ok, #vigg_session{socket = Sock, state = negotiated}};
 
     {error, timeout} = Cause ->
-      error_logger:error_msg("Timeout while waiting for handshake reply: After ", [Timeout]),
+      error_logger:error_msg("Timeout while waiting for handshake reply: After ~p ms", [Timeout]),
       Cause;
 
     Error ->
-      error_logger:error_msg("Could not negotiate with server: ", [Error]),
+      error_logger:error_msg("Could not negotiate with server: ~p", [Error]),
       {error, negotiation_failed}
   end.
 
@@ -259,15 +264,16 @@ negotiate(Sock, Timeout) ->
 %% @private
 %% @doc Authenticate with server
 authenticate(Sock, Timeout, UserName, Password, _Options) ->
-  {_MsgLen, Msg} = vigg_packstream:serialize(
+  Message = vigg_packstream:serialize(
     [{hello, #{principal => UserName, scheme => "basic", credentials => Password, user_agent => "vigg/1"}}]
   ),
-  ok = gen_tcp:send(Sock, Msg),
-  {ok, Reply} = read_reply(Sock, Timeout),
-  case Reply of
-    {success, Map} ->
-      Server = maps:get(server, Map),
-      ConnectionId = maps:get(connection_id, Map),
+  ok = gen_tcp:send(Sock, Message),
+  [Reply | _] = read_reply(Sock, Timeout),
+  {success, Response} = Reply,
+  case Response of
+    [Map | _] ->
+      Server = maps:get("server", Map),
+      ConnectionId = maps:get("connection_id", Map),
       ?PRINT("Connected to ~p (~p)~n", [Server, ConnectionId]),
       {authenticated, #vigg_session{socket = Sock, state = ready}};
 

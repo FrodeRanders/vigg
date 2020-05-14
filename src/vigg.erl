@@ -60,12 +60,7 @@ disconnect(C) ->
 
 
 request(C, Requests) ->
-  case gen_server:call(C,{request, Requests}, infinity) of
-    {success, _Data} = Reply ->
-      Reply;
-    Error = {error, _} ->
-      Error
-  end.
+  gen_server:call(C,{request, Requests}, infinity).
 
 
 %%%===================================================================

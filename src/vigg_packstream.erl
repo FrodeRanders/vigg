@@ -53,99 +53,103 @@ deserialize(<<16#B1:8, ?IGNORED:8, Rest/binary>>) ->
 deserialize(<<16#B1:8, ?FAILURE:8, Rest/binary>>) ->
   {failure, deserialize(Rest)};
 
-deserialize(<<16#C0, Rest/binary>>) ->
+deserialize(<<16#C0:8, Rest/binary>>) ->
   [null | deserialize(Rest)];
 
-deserialize(<<16#C1, Num/float-unit:1, Rest/binary>>) ->
+deserialize(<<16#C1:8, Num/float, Rest/binary>>) ->
   [Num | deserialize(Rest)];
 
-deserialize(<<16#C2, Rest/binary>>) ->
+deserialize(<<16#C2:8, Rest/binary>>) ->
   [false | deserialize(Rest)];
 
-deserialize(<<16#C3, Rest/binary>>) ->
+deserialize(<<16#C3:8, Rest/binary>>) ->
   [true | deserialize(Rest)];
 
 deserialize(<<16#8:4/unsigned-integer, Len:4/unsigned-integer, String:Len/binary, Rest/binary>>) ->
   [deserialize_string(String) | deserialize(Rest)];
 
-deserialize(<<16#D0, Len:8/unsigned-integer, String:Len/binary, Rest/binary>>) ->
+deserialize(<<16#D0:8, Len:8/unsigned-integer, String:Len/binary, Rest/binary>>) ->
   [deserialize_string(String) | deserialize(Rest)];
 
-deserialize(<<16#D1, Len:16/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
+deserialize(<<16#D1:8, Len:16/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
   [deserialize_string(String) | deserialize(Rest)];
 
-deserialize(<<16#D2, Len:32/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
+deserialize(<<16#D2:8, Len:32/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
   [deserialize_string(String) | deserialize(Rest)];
 
-deserialize(<<16#C8, Integer:8/signed-integer, Rest/binary>>) ->
+deserialize(<<16#C8:8, Integer:8/signed-integer, Rest/binary>>) ->
   [Integer | deserialize(Rest)];
 
-deserialize(<<16#C9, Integer:16/big-signed-integer, Rest/binary>>) ->
+deserialize(<<16#C9:8, Integer:16/big-signed-integer, Rest/binary>>) ->
   [Integer | deserialize(Rest)];
 
-deserialize(<<16#CA, Integer:32/big-signed-integer, Rest/binary>>) ->
+deserialize(<<16#CA:8, Integer:32/big-signed-integer, Rest/binary>>) ->
   [Integer | deserialize(Rest)];
 
-deserialize(<<16#CB, Integer:64/big-signed-integer, Rest/binary>>) ->
+deserialize(<<16#CB:8, Integer:64/big-signed-integer, Rest/binary>>) ->
   [Integer | deserialize(Rest)];
 
 deserialize(<<16#A:4, Len:4/unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(List) | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
 
-deserialize(<<16#D8, Len:8/unsigned-integer, Rest/binary>>) ->
+deserialize(<<16#D8:8, Len:8/unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(List) | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
 
-deserialize(<<16#D9, Len:16/big-unsigned-integer, Rest/binary>>) ->
+deserialize(<<16#D9:8, Len:16/big-unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(List) | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
 
-deserialize(<<16#DA, Len:32/big-unsigned-integer, Rest/binary>>) ->
+deserialize(<<16#DA:8, Len:32/big-unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
-  {List, DeserializeRest} = lists:split(Len + Len, deserialize(Rest)),
-  [maps:from_list(List) | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
+  [maps:from_list(key_value_pairs(List)) | DeserializedRest];
 
 deserialize(<<16#9:4, Len:4/unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializedRest];
 
-deserialize(<<16#D4, Len:8/unsigned-integer, Rest/binary>>) ->
+deserialize(<<16#D4:8, Len:8/unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializedRest];
 
-deserialize(<<16#D5, Len:16/big-unsigned-integer, Rest/binary>>) ->
+deserialize(<<16#D5:8, Len:16/big-unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializedRest];
 
-deserialize(<<16#D6, Len:32/big-unsigned-integer, Rest/binary>>) ->
+deserialize(<<16#D6:8, Len:32/big-unsigned-integer, Rest/binary>>) ->
   % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializeRest];
+  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+  [List | DeserializedRest];
 
-deserialize(<<16#B:4, Len:4/unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializeRest]; %% I need to rethink this! What would be a suitable data type here?
-
-deserialize(<<16#DC, Len:8/unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializeRest];
-
-deserialize(<<16#DD, Len:16/big-unsigned-integer, Rest/binary>>) ->
-  % Continue with deserializing and then pick the Len first elements after the fact
-  {List, DeserializeRest} = lists:split(Len, deserialize(Rest)),
-  [List | DeserializeRest];
+%%deserialize(<<16#B:4, Len:4/unsigned-integer, Rest/binary>>) ->
+%%  % Continue with deserializing and then pick the Len first elements after the fact
+%%  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+%%  [List | DeserializedRest]; %% TODO I need to rethink this! What would be a suitable data type here?
+%%
+%%deserialize(<<16#DC:8, Len:8/unsigned-integer, Rest/binary>>) ->
+%%  % Continue with deserializing and then pick the Len first elements after the fact
+%%  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+%%  [List | DeserializedRest];  %% TODO I need to rethink this! What would be a suitable data type here?
+%%
+%%deserialize(<<16#DD:8, Len:16/big-unsigned-integer, Rest/binary>>) ->
+%%  % Continue with deserializing and then pick the Len first elements after the fact
+%%  {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
+%%  [List | DeserializedRest];  %% TODO I need to rethink this! What would be a suitable data type here?
 
 deserialize(<<Integer:8/signed-integer, Rest/binary>>) ->  % have to be last!
-  [Integer | deserialize(Rest)].
+  [Integer | deserialize(Rest)];
+
+deserialize(<<>>) ->
+  [].
+
 
 
 
@@ -161,17 +165,17 @@ deserialize(<<Integer:8/signed-integer, Rest/binary>>) ->  % have to be last!
 serialize_struct({hello, Params}) ->
   {MapLen, Map} = serialize_map(Params),
   Len = (MapLen + 2), % add 2 for struct header
-  {6 + MapLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?HELLO:8>>] ++ Map ++ [<<0:16>>]};
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?HELLO:8>>] ++ Map ++ [<<0:16>>];
 
 %% @private
 %% @doc Close the connection with the server
 serialize_struct({goodbye}) ->
-  {6, [<<16#2:16/big-unsigned-integer, 16#B0:8, ?GOODBYE:8, 0:16>>]};
+  [<<16#2:16/big-unsigned-integer, 16#B0:8, ?GOODBYE:8, 0:16>>];
 
 %% @private
 %% @doc Return the current session to a "clean" state
 serialize_struct({reset}) ->
-  {6, [<<16#2:16/big-unsigned-integer, 16#B0:8, ?RESET:8, 0:16>>]};
+  [<<16#2:16/big-unsigned-integer, 16#B0:8, ?RESET:8, 0:16>>];
 
 %% @private
 %% @doc Execute statement on server
@@ -180,38 +184,38 @@ serialize_struct({run, Statement, Params, Options}) ->
   {MapLen, Map} = serialize_map(Params),
   {OptLen, Opt} = serialize_map(Options),
   Len = StrLen + MapLen + OptLen + 2, % add 2 for struct header
-  {6 + StrLen + MapLen + OptLen, [<<Len:16/big-unsigned-integer, 16#B3:8, ?RUN:8>>] ++ Str ++ Map ++ Opt ++ [<<0:16>>]};
+  [<<Len:16/big-unsigned-integer, 16#B3:8, ?RUN:8>>] ++ Str ++ Map ++ Opt ++ [<<0:16>>];
 
 %% @private
 %% @doc Begin transaction
 serialize_struct({tx_begin, Options}) ->
   {OptLen, Opt} = serialize_map(Options),
   Len = OptLen + 2, % add 2 for struct header
-  {6 + OptLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?BEGIN:8>>] ++ Opt ++ [<<0:16>>]};
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?BEGIN:8>>] ++ Opt ++ [<<0:16>>];
 
 %% @private
 %% @doc Commit transaction
 serialize_struct({tx_commit}) ->
-  {6, [<<2:16/big-unsigned-integer, 16#B0:8, ?COMMIT:8, 0:16>>]};
+  [<<2:16/big-unsigned-integer, 16#B0:8, ?COMMIT:8, 0:16>>];
 
 %% @private
 %% @doc Rollback transaction
 serialize_struct({tx_rollback}) ->
-  {6, [<<2:16/big-unsigned-integer, 16#B0:8, ?ROLLBACK:8, 0:16>>]};
+  [<<2:16/big-unsigned-integer, 16#B0:8, ?ROLLBACK:8, 0:16>>];
 
 %% @private
 %% @doc Discard last N issued statement(s)
 serialize_struct({discard, N}) ->
   {MapLen, Map} = serialize_map(#{n => N}),
   Len = MapLen + 2, % add 2 for struct header
-  {6 + MapLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?DISCARD:8>>] ++ Map ++ [<<0:16>>]};
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?DISCARD:8>>] ++ Map ++ [<<0:16>>];
 
 %% @private
 %% @doc Pull N results
 serialize_struct({pull, N}) ->
   {MapLen, Map} = serialize_map(#{n => N}),
   Len = MapLen + 2, % add 2 for struct header
-  {6 + MapLen, [<<Len:16/big-unsigned-integer, 16#B1:8, ?PULL:8>>] ++ Map ++ [<<0:16>>]}.
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?PULL:8>>] ++ Map ++ [<<0:16>>].
 
 
 %% @private
@@ -289,4 +293,13 @@ deserialize_string(Bin) ->
     {error, _S, _Rest} -> throw({invalid_string, Bin});
     {incomplete, _S, _Rest} -> throw({invalid_string, Bin});
     String -> String
+  end.
+
+
+%% @private
+key_value_pairs(List) ->
+  case List of
+    [] -> [];
+    %[E1, E2 | Rest] -> [{list_to_atom(E1), E2}] ++ key_value_pairs(Rest)
+    [E1, E2 | Rest] -> [{E1, E2}] ++ key_value_pairs(Rest)
   end.
