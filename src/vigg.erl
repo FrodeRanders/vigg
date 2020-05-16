@@ -17,13 +17,13 @@
 ]).
 
 -export([
-  run/3, run/4,
-  tx_begin/1, tx_begin/2,
-  tx_commit/0, tx_commit/1,
-  tx_rollback/0, tx_rollback/1,
-  discard/1, discard/2,
-  pull/1, pull/2,
-  reset/0, reset/1
+  run/3,
+  tx_begin/1,
+  tx_commit/0,
+  tx_rollback/0,
+  discard/1,
+  pull/1,
+  reset/0
 ]).
 
 
@@ -70,42 +70,20 @@ request(C, Requests) ->
 run(Statement, Params, Options) ->
   [{run, Statement, Params, Options}].
 
-run(Acc, Statement, Params, Options) when is_list(Acc) ->
-  Acc ++ [{run, Statement, Params, Options}].
-
 tx_begin(Options) ->
   [{tx_begin, Options}].
-
-tx_begin(Acc, Options) when is_list(Acc) ->
-  Acc ++ [{tx_begin, Options}].
 
 tx_commit() ->
   [{tx_commit}].
 
-tx_commit(Acc) when is_list(Acc) ->
-  Acc ++ [{tx_commit}].
-
 tx_rollback() ->
   [{tx_rollback}].
-
-tx_rollback(Acc) when is_list(Acc) ->
-  Acc ++ [{tx_rollback}].
 
 discard(N) when is_number(N) ->
   [{discard, N}].
 
-discard(Acc, N) when is_list(Acc) andalso is_number(N) ->
-  Acc ++ [{discard, N}].
-
 pull(N) when is_number(N) ->
   [{pull, N}].
 
-pull(Acc, N) when is_list(Acc) andalso is_number(N) ->
-  Acc ++ [{pull, N}].
-
 reset() ->
   [{reset}].
-
-reset(Acc) when is_list(Acc) ->
-  Acc ++ [{reset}].
-
