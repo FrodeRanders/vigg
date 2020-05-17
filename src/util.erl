@@ -10,7 +10,7 @@
 -author("Frode.Randers@forsakringskassan.se").
 
 %% API
--export([connect/0, disconnect/1, query/1, bulk_load/2, fnu/1, fnu/2]).
+-export([connect/0, disconnect/1, query/1, bulk_load_individual/2, bulk_load_whole/2]).
 
 
 -define(PRINT(S, A), io:fwrite("~w(~w): " ++ S, [?MODULE, ?LINE | A])).
@@ -34,7 +34,8 @@ query(C) ->
 
 
 
-bulk_load(C, FileName) ->
+bulk_load_individual(C, FileName) ->
+  {ok, Log} = file:open(log_filename(FileName), [write]),
   {ok, Binary} = file:read_file(FileName),
   % Separate statements from each other
   Stmts = binary:split(Binary, <<$;>>, [global]),
@@ -44,22 +45,68 @@ bulk_load(C, FileName) ->
         string:trim(combine(" ", Lines))
     end,
   CleanStmts = lists:map(F, Stmts),
+  %
+  io:format(Log, "~nStatements loaded from ~s~n", [FileName]),
+  Prepare =
+    fun(E, Acc) ->
+      case E of
+        [] -> Acc;
+        Str ->
+          io:format(Log, "~s~n", [Str]),
+          Begin = vigg:tx_begin(#{}),
+          Req = vigg:run(Str, #{}, #{}),
+          Commit = vigg:tx_commit(),
+          [Commit, Req, Begin | Acc] % List is reversed later!
+      end
+    end,
+  Requests = lists:reverse(lists:foldl(Prepare, [], CleanStmts)),
+  %
+  io:format(Log, "~nExecuting statements~n", []),
+  Submit = fun(E) ->
+    io:format(Log, "IN: ~p~n", E),
+    Reply = vigg:request(C, E),
+    lists:map(fun(E) -> io:format(Log, "OUT: ~p~n", [E]) end, Reply)
+    end,
+  lists:map(Submit, Requests),
+  file:close(Log).
+
+
+bulk_load_whole(C, FileName) ->
+  {ok, Log} = file:open(log_filename(FileName), [write]),
+  {ok, Binary} = file:read_file(FileName),
+  % Separate statements from each other
+  Stmts = binary:split(Binary, <<$;>>, [global]),
+  % Get rid of line comments (before removing newline chars)
+  F = fun(<<Stmt/binary>>) ->
+    Lines = lists:map(fun fnu/1, binary:split(Stmt, <<$\n>>, [global])),
+    string:trim(combine(" ", Lines))
+      end,
+  CleanStmts = lists:map(F, Stmts),
+  %
+  io:format(Log, "~nStatements loaded from ~s~n", [FileName]),
   Load =
     fun(E, Acc) ->
-      Req = vigg:run(E, #{}, #{}),
-      ?PRINT("~p~n", [Req]),
-      [Req | Acc]
+      case E of
+        [] -> Acc;
+        Str ->
+          io:format(Log,"~p~n", [Str]),
+          Req = vigg:run(Str, #{}, #{}),
+          [Req | Acc]
+      end
     end,
-  Requests = lists:reverse(lists:foldl(Load, [], CleanStmts)),
+  Requests1 = [vigg:tx_begin(#{}) | lists:reverse([vigg:tx_commit() | lists:foldl(Load, [], CleanStmts)])],
+  Requests = lists:flatten(Requests1),
   %
-  BeginReply = vigg:request(C, vigg:tx_begin(#{})),
-  ?PRINT("~n~nTRANSACTION BEGIN ~p~n", [BeginReply]),
-  Reply = vigg:request(C, lists:flatten(Requests)),
-  ?PRINT("~n~nGot ~p~n", [Reply]),
-  CommitReply = vigg:request(C, vigg:tx_commit()),
-  ?PRINT("~n~nTRANSACTION COMMIT ~p~n", [CommitReply]).
+  io:format(Log, "~nExecuting statements~n", []),
+  lists:map(fun(E) -> io:format(Log, "IN: ~p~n", [E]) end, Requests),
+  Reply = vigg:request(C, Requests),
+  lists:map(fun(E) -> io:format(Log, "OUT: ~p~n", [E]) end, Reply),
+  file:close(Log).
 
-
+log_filename(FileName) ->
+  {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:now_to_datetime(erlang:now()),
+  DateTime = lists:flatten(io_lib:format("~4..0w-~2..0w-~2..0wT~2..0w:~2..0w:~2..0w",[Year,Month,Day,Hour,Minute,Second])),
+  FileName ++ "-" ++ DateTime ++ ".log".
 
 %% Truncate comments
 fnu(<<String/binary>>) ->

@@ -53,17 +53,17 @@ deserialize(<<16#C2:8, Rest/binary>>) ->
 deserialize(<<16#C3:8, Rest/binary>>) ->
   [true | deserialize(Rest)];
 
-deserialize(<<16#8:4/unsigned-integer, Len:4/unsigned-integer, String:Len/binary, Rest/binary>>) ->
-  [deserialize_string(String) | deserialize(Rest)];
+deserialize(<<16#8:4/unsigned-integer, Len:4/unsigned-integer, BinStr:Len/binary, Rest/binary>>) ->
+  [binary_to_list(BinStr) | deserialize(Rest)];
 
-deserialize(<<16#D0:8, Len:8/unsigned-integer, String:Len/binary, Rest/binary>>) ->
-  [deserialize_string(String) | deserialize(Rest)];
+deserialize(<<16#D0:8, Len:8/unsigned-integer, BinStr:Len/binary, Rest/binary>>) ->
+  [binary_to_list(BinStr) | deserialize(Rest)];
 
-deserialize(<<16#D1:8, Len:16/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
-  [deserialize_string(String) | deserialize(Rest)];
+deserialize(<<16#D1:8, Len:16/big-unsigned-integer, BinStr:Len/binary, Rest/binary>>) ->
+  [binary_to_list(BinStr) | deserialize(Rest)];
 
-deserialize(<<16#D2:8, Len:32/big-unsigned-integer, String:Len/binary, Rest/binary>>) ->
-  [deserialize_string(String) | deserialize(Rest)];
+deserialize(<<16#D2:8, Len:32/big-unsigned-integer, BinStr:Len/binary, Rest/binary>>) ->
+  [binary_to_list(BinStr) | deserialize(Rest)];
 
 deserialize(<<16#C8:8, Integer:8/signed-integer, Rest/binary>>) ->
   [Integer | deserialize(Rest)];
@@ -215,8 +215,7 @@ serialize_map(Map) ->
 %% @private
 %% @doc Serialize a string
 serialize_string(Str) ->
-  Bin = unicode:characters_to_binary(Str),
-  StrLen = byte_size(Bin),
+  StrLen = string:length(Str),
   {PrefixLen, Prefix} =
     if
       StrLen < 16#10 -> {1, <<(16#80 + StrLen):8>>};
@@ -225,7 +224,7 @@ serialize_string(Str) ->
       StrLen < 16#100000000 -> {5, <<16#D2:8, StrLen:32/big-unsigned-integer>>};
       true -> throw("String header size out of range")
     end,
-  {PrefixLen + StrLen, [Prefix, <<Bin/binary>>]}.
+  {PrefixLen + StrLen, [Prefix, Str]}.
 
 
 %% @private
@@ -253,24 +252,18 @@ serialize_integer(Int) ->
 
 
 %% @private
-%% @doc Deserialize an individual string
-deserialize_string(Bin) ->
-  case unicode:characters_to_list(Bin) of
-    {error, _S, _Rest} -> throw({invalid_string, Bin});
-    {incomplete, _S, _Rest} -> throw({invalid_string, Bin});
-    String -> String
-  end.
-
 deserialize_map(Len, Rest) ->
   % Continue with deserializing and then pick the Len first (key, value)-pairs after the fact
   {List, DeserializedRest} = lists:split(Len + Len, deserialize(Rest)),
   [maps:from_list(key_value_pairs(List)) | DeserializedRest].
 
+%% @private
 deserialize_list(Len, Rest) ->
   % Continue with deserializing and then pick the Len first elements after the fact
   {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
   [List | DeserializedRest].
 
+%% @private
 deserialize_struct(Len, Signature, Rest) ->
   % Continue with deserializing and then pick the Len first elements after the fact
   {List, DeserializedRest} = lists:split(Len, deserialize(Rest)),
