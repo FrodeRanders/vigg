@@ -28,7 +28,7 @@ A simple session with Neo4j:
     %
     vigg:disconnect(C).
 
-and an example, bulk-loading a file with CQL statements:
+and an example, bulk-loading a file with Cypher statements:
 
     $ rebar3 shell
     Erlang/OTP 22 [erts-10.5] [source] [64-bit] [smp:20:20] [ds:20:20:10] [async-threads:1] [hipe]
@@ -37,6 +37,6 @@ and an example, bulk-loading a file with CQL statements:
     1> C = util:connect().
     vigg_connection(276): Connected to "Neo4j/4.0.4" ("bolt-342")
     <0.138.0>
-    2> util:bulk_load_whole(C, "./stmts.cql").
+    2> util:bulk_load_whole(C, "./stmts").
     ok   
     
