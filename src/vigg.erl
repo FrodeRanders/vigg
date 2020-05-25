@@ -70,6 +70,8 @@ request(C, Requests) ->
 run(Statement, Params, Options) ->
   [{run, Statement, Params, Options}].
 
+%% #{"db" => ""}
+%% MapValue meta, List<Bookmark> bookmarks, Duration txTimeout, AccessMode accessMode, Map<String,Object> txMetadata
 tx_begin(Options) ->
   [{tx_begin, Options}].
 

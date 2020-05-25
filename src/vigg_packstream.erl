@@ -35,9 +35,7 @@
 
 %% @doc Serializes a list of Bolt requests into Message(s)
 serialize([H | T]) ->
-  A = serialize_struct(H),
-  B = serialize(T),
-  A ++ B;
+  [serialize_struct(H) | serialize(T)];
 serialize([]) -> [].
 
 %% @doc Deserializes reply from server
@@ -110,7 +108,7 @@ deserialize(<<16#DC:8, Len:8/unsigned-integer, Signature:8/unsigned-integer, Res
 deserialize(<<16#DD:8, Len:16/big-unsigned-integer, Signature:8/unsigned-integer, Rest/binary>>) ->
   deserialize_struct(Len, Signature, Rest);
 
-deserialize(<<Integer:8/signed-integer, Rest/binary>>) ->  % have to be last!
+deserialize(<<Integer:8/signed-integer, Rest/binary>>) ->  % have to be here, next to last!
   [Integer | deserialize(Rest)];
 
 deserialize(<<>>) ->
@@ -130,8 +128,8 @@ deserialize(<<>>) ->
 %% @doc Authenticate the session
 serialize_struct({hello, Params}) ->
   {MapLen, Map} = serialize_map(Params),
-  Len = (MapLen + 2), % add 2 for struct header
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?HELLO:8>>] ++ Map ++ [<<0:16>>];
+  Len = (MapLen + 2), % add 2 for size of struct and signature bytes
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?HELLO:8>>, Map, <<0:16>>];
 
 %% @private
 %% @doc Close the connection with the server
@@ -149,15 +147,15 @@ serialize_struct({run, Statement, Params, Options}) ->
   {StrLen, Str} = serialize_string(Statement),
   {MapLen, Map} = serialize_map(Params),
   {OptLen, Opt} = serialize_map(Options),
-  Len = StrLen + MapLen + OptLen + 2, % add 2 for struct header
-  [<<Len:16/big-unsigned-integer, 16#B3:8, ?RUN:8>>] ++ Str ++ Map ++ Opt ++ [<<0:16>>];
+  Len = StrLen + MapLen + OptLen + 2, % add 2 for size of struct and signature bytes
+  [<<Len:16/big-unsigned-integer, 16#B3:8, ?RUN:8>>, Str, Map, Opt, <<0:16>>];
 
 %% @private
 %% @doc Begin transaction
 serialize_struct({tx_begin, Options}) ->
   {OptLen, Opt} = serialize_map(Options),
-  Len = OptLen + 2, % add 2 for struct header
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?BEGIN:8>>] ++ Opt ++ [<<0:16>>];
+  Len = OptLen + 2, % add 2 for size of struct and signature bytes
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?BEGIN:8>>, Opt, <<0:16>>];
 
 %% @private
 %% @doc Commit transaction
@@ -173,15 +171,15 @@ serialize_struct({tx_rollback}) ->
 %% @doc Discard last N issued statement(s)
 serialize_struct({discard, N}) ->
   {MapLen, Map} = serialize_map(#{n => N}),
-  Len = MapLen + 2, % add 2 for struct header
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?DISCARD:8>>] ++ Map ++ [<<0:16>>];
+  Len = MapLen + 2, % add 2 for size of struct and signature bytes
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?DISCARD:8>>, Map, <<0:16>>];
 
 %% @private
 %% @doc Pull N results
 serialize_struct({pull, N}) ->
   {MapLen, Map} = serialize_map(#{n => N}),
-  Len = MapLen + 2, % add 2 for struct header
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?PULL:8>>] ++ Map ++ [<<0:16>>].
+  Len = MapLen + 2, % add 2 for size of struct and signature bytes
+  [<<Len:16/big-unsigned-integer, 16#B1:8, ?PULL:8>>, Map, <<0:16>>].
 
 
 %% @private
@@ -209,7 +207,7 @@ serialize_map(Map) ->
       {CumLen + KeyLen + ValLen, Cum ++ Key ++ Val}
     end,
   {Len, Collected} = maps:fold(Collect, {0, []}, Map),
-  {PrefixLen + Len, [Prefix] ++ Collected}.
+  {PrefixLen + Len, [Prefix | Collected]}.
 
 
 %% @private
