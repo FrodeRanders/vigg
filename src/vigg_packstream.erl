@@ -34,7 +34,7 @@
 %%%===================================================================
 
 %% @doc Serializes a list of Bolt requests into Message(s)
-serialize([H | T]) ->
+serialize([H|T]) ->
   [serialize_struct(H) | serialize(T)];
 serialize([]) -> [].
 
@@ -127,121 +127,116 @@ deserialize(<<>>) ->
 %% @private
 %% @doc Authenticate the session
 serialize_struct({hello, Params}) ->
-  {MapLen, Map} = serialize_map(Params),
-  Len = (MapLen + 2), % add 2 for size of struct and signature bytes
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?HELLO:8>>, Map, <<0:16>>];
+  Map = serialize_map(Params),
+  [<<16#B1:8, ?HELLO:8>>, Map];
 
 %% @private
 %% @doc Close the connection with the server
 serialize_struct({goodbye}) ->
-  [<<16#2:16/big-unsigned-integer, 16#B0:8, ?GOODBYE:8, 0:16>>];
+  [<<16#B0:8, ?GOODBYE:8>>];
 
 %% @private
 %% @doc Return the current session to a "clean" state
 serialize_struct({reset}) ->
-  [<<16#2:16/big-unsigned-integer, 16#B0:8, ?RESET:8, 0:16>>];
+  [<<16#B0:8, ?RESET:8>>];
 
 %% @private
 %% @doc Execute statement on server
 serialize_struct({run, Statement, Params, Options}) ->
-  {StrLen, Str} = serialize_string(Statement),
-  {MapLen, Map} = serialize_map(Params),
-  {OptLen, Opt} = serialize_map(Options),
-  Len = StrLen + MapLen + OptLen + 2, % add 2 for size of struct and signature bytes
-  [<<Len:16/big-unsigned-integer, 16#B3:8, ?RUN:8>>, Str, Map, Opt, <<0:16>>];
+  Str = serialize_string(Statement),
+  Map = serialize_map(Params),
+  Opt = serialize_map(Options),
+  [<<16#B3:8, ?RUN:8>>, Str, Map, Opt];
 
 %% @private
 %% @doc Begin transaction
 serialize_struct({tx_begin, Options}) ->
-  {OptLen, Opt} = serialize_map(Options),
-  Len = OptLen + 2, % add 2 for size of struct and signature bytes
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?BEGIN:8>>, Opt, <<0:16>>];
+  Opt = serialize_map(Options),
+  [<<16#B1:8, ?BEGIN:8>>, Opt];
 
 %% @private
 %% @doc Commit transaction
 serialize_struct({tx_commit}) ->
-  [<<2:16/big-unsigned-integer, 16#B0:8, ?COMMIT:8, 0:16>>];
+  [<<16#B0:8, ?COMMIT:8>>];
 
 %% @private
 %% @doc Rollback transaction
 serialize_struct({tx_rollback}) ->
-  [<<2:16/big-unsigned-integer, 16#B0:8, ?ROLLBACK:8, 0:16>>];
+  [<<16#B0:8, ?ROLLBACK:8>>];
 
 %% @private
 %% @doc Discard last N issued statement(s)
 serialize_struct({discard, N}) ->
-  {MapLen, Map} = serialize_map(#{n => N}),
-  Len = MapLen + 2, % add 2 for size of struct and signature bytes
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?DISCARD:8>>, Map, <<0:16>>];
+  Map = serialize_map(#{n => N}),
+  [<<16#B1:8, ?DISCARD:8>>, Map];
 
 %% @private
 %% @doc Pull N results
 serialize_struct({pull, N}) ->
-  {MapLen, Map} = serialize_map(#{n => N}),
-  Len = MapLen + 2, % add 2 for size of struct and signature bytes
-  [<<Len:16/big-unsigned-integer, 16#B1:8, ?PULL:8>>, Map, <<0:16>>].
+  Map = serialize_map(#{n => N}),
+  [<<16#B1:8, ?PULL:8>>, Map].
 
 
 %% @private
 %% @doc Serialize a Map
 serialize_map(Map) ->
   Size = maps:size(Map),
-  {PrefixLen, Prefix} =
+  Prefix =
     if
-      Size < 16#10 -> {1, <<(16#A0 + Size):8/unsigned-integer>>};
-      Size < 16#100 -> {2, <<16#D8:8, Size:8/unsigned-integer>>};
-      Size < 16#10000 -> {3, <<16#D9:8, Size:16/big-unsigned-integer>>};
-      Size < 16#100000000 -> {5, <<16#DA:8, Size:32/big-unsigned-integer>>};
+      Size < 16#10 -> <<(16#A0 + Size):8/unsigned-integer>>;
+      Size < 16#100 -> <<16#D8:8, Size:8/unsigned-integer>>;
+      Size < 16#10000 -> <<16#D9:8, Size:16/big-unsigned-integer>>;
+      Size < 16#100000000 -> <<16#DA:8, Size:32/big-unsigned-integer>>;
       true -> throw("Map header size out of range")
     end,
   Collect =
-    fun(K, V, {CumLen, Cum}) ->
-      {KeyLen, Key} = serialize_string(atom_to_list(K)),
-      {ValLen, Val} =
+    fun(K, V, Cum) ->
+      Key = serialize_string(atom_to_list(K)),
+      Val =
         if
           is_integer(V) ->
             serialize_integer(V);
           true ->
             serialize_string(V)
         end,
-      {CumLen + KeyLen + ValLen, Cum ++ Key ++ Val}
+      [Val, Key | Cum]       %Cum ++ Key ++ Val
     end,
-  {Len, Collected} = maps:fold(Collect, {0, []}, Map),
-  {PrefixLen + Len, [Prefix | Collected]}.
+  Collected = lists:reverse(maps:fold(Collect, [], Map)),
+  [Prefix | Collected].
 
 
 %% @private
 %% @doc Serialize a string
 serialize_string(Str) ->
   StrLen = string:length(Str),
-  {PrefixLen, Prefix} =
+  Prefix =
     if
-      StrLen < 16#10 -> {1, <<(16#80 + StrLen):8>>};
-      StrLen < 16#100 -> {2, <<16#D0:8, StrLen:8>>};
-      StrLen < 16#10000 -> {3, <<16#D1:8, StrLen:16/big-unsigned-integer>>};
-      StrLen < 16#100000000 -> {5, <<16#D2:8, StrLen:32/big-unsigned-integer>>};
+      StrLen < 16#10 -> <<(16#80 + StrLen):8>>;
+      StrLen < 16#100 -> <<16#D0:8, StrLen:8>>;
+      StrLen < 16#10000 -> <<16#D1:8, StrLen:16/big-unsigned-integer>>;
+      StrLen < 16#100000000 -> <<16#D2:8, StrLen:32/big-unsigned-integer>>;
       true -> throw("String header size out of range")
     end,
-  {PrefixLen + StrLen, [Prefix, Str]}.
+  [Prefix, Str].
 
 
 %% @private
 %% @doc Serialize an integer
 serialize_integer(Int) ->
-  {Len, Bin} =
+  Bin =
     if
     % Rearrange for performance?
-      Int >= -9223372036854775808 andalso Int =< -2147483649 -> {9, <<16#CB:8, Int:64/big-signed-integer>>};
-      Int >= -2147483648 andalso Int =< -32769 -> {5, <<16#CA:8, Int:32/big-signed-integer>>};
-      Int >= -32768 andalso Int =< -129 -> {3, <<16#C9:8, Int:16/big-signed-integer>>};
-      Int >= -128 andalso Int =< -17 -> {2, <<16#C8:8, Int:8/signed-integer>>};
-      Int >= -16 andalso Int =< + 127 -> {1, <<Int:8/signed-integer>>};
-      Int >= + 128 andalso Int =< + 32767 -> {3, <<16#C9:8, Int:16/big-signed-integer>>};
-      Int >= + 32768 andalso Int =< + 2147483647 -> {5, <<16#CA:8, Int:32/big-signed-integer>>};
-      Int >= + 2147483648 andalso Int =< + 9223372036854775807 -> {9, <<16#CB:8, Int:64/big-signed-integer>>};
+      Int >= -9223372036854775808 andalso Int =< -2147483649 -> <<16#CB:8, Int:64/big-signed-integer>>;
+      Int >= -2147483648 andalso Int =< -32769 -> <<16#CA:8, Int:32/big-signed-integer>>;
+      Int >= -32768 andalso Int =< -129 -> <<16#C9:8, Int:16/big-signed-integer>>;
+      Int >= -128 andalso Int =< -17 -> <<16#C8:8, Int:8/signed-integer>>;
+      Int >= -16 andalso Int =< + 127 -> <<Int:8/signed-integer>>;
+      Int >= + 128 andalso Int =< + 32767 -> <<16#C9:8, Int:16/big-signed-integer>>;
+      Int >= + 32768 andalso Int =< + 2147483647 -> <<16#CA:8, Int:32/big-signed-integer>>;
+      Int >= + 2147483648 andalso Int =< + 9223372036854775807 -> <<16#CB:8, Int:64/big-signed-integer>>;
       true -> throw("Integer size out of range")
     end,
-  {Len, [<<Bin/binary>>]}.
+  [<<Bin/binary>>].
 
 
 

@@ -10,7 +10,7 @@
 -author("Frode.Randers@forsakringskassan.se").
 
 %% API
--export([connect/0, disconnect/1, query/1, bulk_load_individual/2, bulk_load_whole/2]).
+-export([connect/0, disconnect/1, bulk_load_individual/2, bulk_load_whole/2]).
 
 
 -define(PRINT(S, A), io:fwrite("~w(~w): " ++ S, [?MODULE, ?LINE | A])).
@@ -21,18 +21,6 @@ connect() ->
 
 disconnect(C) ->
   vigg:disconnect(C).
-
-query(C) ->
-  %
-  Requests = vigg:run("RETURN 1 AS num", #{}, #{}),
-  Requests2 = vigg:pull(Requests, 1000),
-
-  %
-  ?PRINT("Sending ~p~n", [Requests2]),
-  Reply = vigg:request(C, Requests2),
-  ?PRINT("Got ~p~n", [Reply]).
-
-
 
 bulk_load_individual(C, FileName) ->
   {ok, Log} = file:open(log_filename(FileName), [write]),
@@ -62,10 +50,10 @@ bulk_load_individual(C, FileName) ->
   Requests = lists:reverse(lists:foldl(Prepare, [], CleanStmts)),
   %
   io:format(Log, "~nExecuting statements~n", []),
-  Submit = fun(E) ->
-    io:format(Log, "IN: ~p~n", E),
-    Reply = vigg:request(C, E),
-    lists:map(fun(E) -> io:format(Log, "OUT: ~p~n", [E]) end, Reply)
+  Submit = fun(I) ->
+    io:format(Log, "IN: ~p~n", I),
+    Reply = vigg:request(C, I),
+    lists:map(fun(O) -> io:format(Log, "OUT: ~p~n", [O]) end, Reply)
     end,
   lists:map(Submit, Requests),
   file:close(Log).
@@ -104,7 +92,7 @@ bulk_load_whole(C, FileName) ->
   file:close(Log).
 
 log_filename(FileName) ->
-  {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:now_to_datetime(erlang:now()),
+  {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:now_to_local_time(erlang:timestamp()),
   DateTime = lists:flatten(io_lib:format("~4..0w-~2..0w-~2..0wT~2..0w:~2..0w:~2..0w",[Year,Month,Day,Hour,Minute,Second])),
   FileName ++ "-" ++ DateTime ++ ".log".
 

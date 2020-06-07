@@ -18,6 +18,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
+-define(DEFAULT_TIMEOUT, 5000).
 
 -define(PRINT(S, A), io:fwrite("~w(~w): " ++ S, [?MODULE, ?LINE | A])).
 %%-define(PRINT(S, A), true).
@@ -117,16 +118,23 @@ code_change(_OldVsn, State = #vigg_session{}, _Extra) ->
 call({connect, Host, Port, UserName, Password, Options}, _State) ->
   % Important to disable Nagle algorithm, otherwise we will get latencies
   Opts = [binary, {packet, raw}, {nodelay, true}, {keepalive, true}, {active, false}],
-  Timeout = 5000,
+  Timeout = ?DEFAULT_TIMEOUT,
   case gen_tcp:connect(Host, Port, Opts, Timeout) of
     {ok, Sock} ->
-      % Max chunk size is 0xFFFF (65535)
+      % Max chunk size i Bolt is 65535 (0xFFFF) bytes. It is recommended to have
+      % buffer >= recbuf
       {ok, [{sndbuf, SendBufferSize}, {recbuf, ReceiveBufferSize}]} = inet:getopts(Sock, [sndbuf, recbuf]),
-      inet:setopts(Sock, [{buffer, max(SendBufferSize, ReceiveBufferSize)}]),
+      SndMax = min(SendBufferSize, 16#FFFF),
+      RecMax = min(ReceiveBufferSize, 16#FFFF),
+      SugMax = max( max(SndMax, RecMax), 16#2000), % at least 8192
+      inet:setopts(Sock, [{buffer, SugMax}]),
 
-      % Negotiate protocol version with server
+      % We're now in raw Bolt mode, continue with negotiating protocol version with server
       case negotiate(Sock, Timeout) of
         {ok, _} ->
+          % Enter messaging mode before authenticating
+          ok = inet:setopts(Sock, [{packet, 2}]),
+
           % Authenticate with server
           case authenticate(Sock, Timeout, UserName, Password, Options) of
             {authenticated, AuthenticatedState} ->
@@ -173,9 +181,10 @@ call({request, Requests}, State) ->
       % Send request(s)
       Message = vigg_packstream:serialize(Requests),
       ok = gen_tcp:send(Sock, Message),
+      ok = gen_tcp:send(Sock, <<>>), % trailing <<0:16>>
 
       % Receive reply
-      Reply = lists:flatten(read_reply(Sock, Timeout)),
+      Reply = read_reply(Sock, Timeout),
       {reply, Reply, State};
 
     _ ->
@@ -187,56 +196,6 @@ call(Request, State) ->
   {stop, unknown_request, State}.
 
 
-
-%% @private
-read_reply(Sock, Timeout) ->
-  lists:reverse(read_reply(Sock, Timeout, [])).
-
-%% @private
-read_reply(Sock, Timeout, []) ->
-  case gen_tcp:recv(Sock, 2, Timeout) of
-    {ok, <<Size:16/big-unsigned-integer>>} ->
-      ReadSofar = read_chunk(Sock, Timeout, Size),
-      read_reply(Sock, Timeout, [ReadSofar]);
-
-    {error, timeout} = Cause ->
-      error_logger:error_msg("Timeout while reading reply: After ~p ns", [Timeout]),
-      Cause;
-
-    Error ->
-      error_logger:error_msg("Could not read reply: ~p", [Error]),
-      {error, Error}
-  end;
-
-read_reply(Sock, Timeout, ReadSofar) ->
-  case gen_tcp:recv(Sock, 2, 1) of
-    {ok, <<Size:16/big-unsigned-integer>>} ->
-      Data = read_chunk(Sock, Timeout, Size),
-      [Data | ReadSofar];
-
-    {error, timeout} ->
-     ReadSofar;
-
-    Error ->
-      error_logger:error_msg("Could not read additional data: ~p", [Error]),
-      {error, Error}
-  end.
-
-
-%% @private
-read_chunk(Sock, Timeout, Size) ->
-  case gen_tcp:recv(Sock, Size + 2, Timeout) of
-    {ok, <<Chunk:Size/binary, 16#0:16>>} ->
-      vigg_packstream:deserialize(Chunk);
-
-    {error, timeout} = Cause ->
-      error_logger:error_msg("Timeout while reading chunk: After ~p ms", [Timeout]),
-      Cause;
-
-    Error ->
-      error_logger:error_msg("Could not read reply: ~p", [Error]),
-      {error, Error}
-  end.
 
 %% @private
 %% @doc Negotiate protocol version with server
@@ -267,16 +226,43 @@ authenticate(Sock, Timeout, UserName, Password, _Options) ->
     [{hello, #{principal => UserName, scheme => "basic", credentials => Password, user_agent => "vigg/1"}}]
   ),
   ok = gen_tcp:send(Sock, Message),
-  ReplyMap = maps:from_list(lists:flatten(read_reply(Sock, Timeout))),
+  ok = gen_tcp:send(Sock, <<>>), % trailing <<0:16>>
+  ReplyMap = maps:from_list(read_reply(Sock, Timeout)),
 
   case maps:get(success, ReplyMap) of
     [Map | _] ->
       Server = maps:get("server", Map),
-      ConnectionId = maps:get("connection_id", Map),
-      ?PRINT("Connected to ~p (~p)~n", [Server, ConnectionId]),
+      ?PRINT("Connected to ~p~n", [Server]),
       {authenticated, #vigg_session{socket = Sock, state = ready}};
 
     Other ->
       error_logger:error_msg("Could not authenticate with server: ", [Other]),
       {error, authentication_failed}
   end.
+
+
+%% @private
+read_reply(Sock, Timeout) ->
+  {ok, Chunks} = read_reply(Sock, Timeout, []),
+  Binary = list_to_binary(lists:reverse(Chunks)), % List of binary chunks to contiguous binary
+  lists:flatten(lists:reverse(vigg_packstream:deserialize(Binary))).
+
+%% @private
+%% Reads possibly multiple chunks (if fragmented) until end-marker is received
+read_reply(Sock, Timeout, AccChunks) ->
+  case gen_tcp:recv(Sock, 0, Timeout) of
+    {ok, <<Chunk/binary>>} when byte_size(Chunk) > 0 ->
+      read_reply(Sock, Timeout, [Chunk | AccChunks]);
+
+    {ok, <<>>} -> % end-marker received
+      {ok, AccChunks};
+
+    {error, timeout} = Cause ->
+      error_logger:error_msg("Timeout while reading reply: After ~p ms", [Timeout]),
+      Cause;
+
+    Error ->
+      error_logger:error_msg("Could not read reply: ~p", [Error]),
+      Error
+  end.
+
